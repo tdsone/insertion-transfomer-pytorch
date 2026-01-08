@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+insertion_transformer/
+!src/insertion_transformer
+kaparthy-gpt
+.DS_Store
