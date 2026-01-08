@@ -3,8 +3,10 @@
 import random
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 import torch
+from torch.utils.data import IterableDataset, DataLoader as TorchDataLoader
 
 from .config import PAD, BOS, EOS, Config, default_config
 
@@ -226,13 +228,71 @@ def collate_samples(samples: list[InsertionSample], vocab_size: int) -> Insertio
     )
 
 
-# ============ DATA LOADER ============
+# ============ DATA LOADER (Efficient PyTorch-based) ============
+
+
+class InsertionDataset(IterableDataset):
+    """
+    IterableDataset that generates insertion samples on-the-fly.
+
+    Using IterableDataset instead of map-style Dataset because:
+    1. Trajectories are generated randomly each epoch (infinite stream)
+    2. Each sample is cheap to generate individually
+    3. Avoids indexing overhead
+    """
+
+    def __init__(
+        self,
+        data: torch.Tensor,
+        vocab_size: int,
+        block_size: int,
+        include_eos: bool = True,
+    ):
+        self.data = data
+        self.vocab_size = vocab_size
+        self.block_size = block_size
+        self.include_eos = include_eos
+
+    def __iter__(self) -> Iterator[InsertionSample]:
+        """Yield insertion samples infinitely."""
+        while True:
+            # Random starting position
+            start = random.randint(0, len(self.data) - self.block_size - 1)
+            ref = self.data[start : start + self.block_size].tolist()
+
+            # Generate trajectory and pick one random sample
+            if self.include_eos:
+                trajectory = generate_trajectory_with_eos(ref, mode="random")
+            else:
+                trajectory = generate_trajectory(ref, mode="random")
+
+            if trajectory:
+                yield random.choice(trajectory)
+
+
+def _collate_fn(samples: list[InsertionSample], vocab_size: int) -> InsertionBatch:
+    """Custom collate function that wraps collate_samples."""
+    return collate_samples(samples, vocab_size)
 
 
 class DataLoader:
-    """Handles data loading and batch generation."""
+    """
+    Efficient data loader using PyTorch's multiprocessing.
 
-    def __init__(self, data_path: str | Path, config: Config = default_config):
+    Key improvements over simple batch generation:
+    - num_workers: Parallel worker processes prepare batches in background
+    - prefetch_factor: Workers prefetch batches ahead of training
+    - pin_memory: Faster CPU->GPU memory transfer
+    - persistent_workers: Avoids worker respawn overhead between epochs
+    """
+
+    def __init__(
+        self,
+        data_path: str | Path,
+        config: Config = default_config,
+        num_workers: int = 4,
+        prefetch_factor: int = 2,
+    ):
         self.config = config
 
         # Load and tokenize text
@@ -248,36 +308,52 @@ class DataLoader:
         self.train_data = data[:train_size]
         self.val_data = data[train_size:]
 
+        # Create datasets
+        self.train_dataset = InsertionDataset(
+            self.train_data,
+            self.vocab_size,
+            config.block_size,
+            include_eos=True,
+        )
+        self.val_dataset = InsertionDataset(
+            self.val_data,
+            self.vocab_size,
+            config.block_size,
+            include_eos=True,
+        )
+
+        # Create collate function with vocab_size bound
+        def collate(samples):
+            return _collate_fn(samples, self.vocab_size)
+
+        # DataLoader settings for efficiency
+        loader_kwargs = {
+            "batch_size": config.batch_size,
+            "collate_fn": collate,
+            "num_workers": num_workers,
+            "prefetch_factor": prefetch_factor if num_workers > 0 else None,
+            "pin_memory": True,  # Faster CPU->GPU transfer
+            "persistent_workers": num_workers > 0,  # Keep workers alive
+        }
+
+        self._train_loader = TorchDataLoader(self.train_dataset, **loader_kwargs)
+        self._val_loader = TorchDataLoader(self.val_dataset, **loader_kwargs)
+
+        # Create iterators for get_batch() compatibility
+        self._train_iter = iter(self._train_loader)
+        self._val_iter = iter(self._val_loader)
+
     def get_batch(self, split: str, include_eos: bool = True) -> InsertionBatch:
         """
-        Get a random batch of training samples.
+        Get next batch from the prefetched queue.
 
-        Strategy:
-        1. Sample random chunks of text as target sequences
-        2. For each target, sample ONE random step from its insertion trajectory
-        3. Include EOS samples so model learns when to stop
+        Note: include_eos parameter is kept for API compatibility but
+        is now configured at DataLoader init time via the dataset.
         """
-        data_source = self.train_data if split == "train" else self.val_data
-        batch_size = self.config.batch_size
-        block_size = self.config.block_size
-
-        samples = []
-        for _ in range(batch_size):
-            # Random starting position
-            start = random.randint(0, len(data_source) - block_size - 1)
-            ref = [int(t) for t in data_source[start : start + block_size].tolist()]
-
-            # Generate trajectory (with EOS) and pick one random sample
-            if include_eos:
-                trajectory = generate_trajectory_with_eos(ref, mode="random")
-            else:
-                trajectory = generate_trajectory(ref, mode="random")
-
-            if trajectory:
-                sample = random.choice(trajectory)
-                samples.append(sample)
-
-        return collate_samples(samples, self.vocab_size)
+        if split == "train":
+            return next(self._train_iter)
+        else:
+            return next(self._val_iter)
 
     def info(self) -> dict:
         """Return info about the dataset."""
