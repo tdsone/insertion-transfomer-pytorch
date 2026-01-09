@@ -1,6 +1,9 @@
 """Insertion Transformer model architecture."""
 
+from __future__ import annotations
+
 import math
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -29,7 +32,7 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Args:
@@ -95,7 +98,7 @@ class TransformerBlock(nn.Module):
         self.mlp = MLP(n_embd, dropout)
 
     def forward(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         x = x + self.attn(self.ln1(x), mask)
         x = x + self.mlp(self.ln2(x))
@@ -177,7 +180,7 @@ class InsertionTransformer(nn.Module):
     def forward(
         self,
         hypo: torch.Tensor,  # [B, T] token indices
-        hypo_len: torch.Tensor | None = None,  # [B] actual lengths
+        hypo_len: Optional[torch.Tensor] = None,  # [B] actual lengths
     ) -> dict[str, torch.Tensor]:
         """
         Forward pass.

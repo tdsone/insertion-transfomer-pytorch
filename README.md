@@ -13,3 +13,9 @@ uv sync
 ```bash
 insertion-transformer --help
 ```
+
+### Train on DNA/FASTA data with a specific GPU
+
+```bash
+insertion-transformer train genome.fna --dna --device cuda:2
+```

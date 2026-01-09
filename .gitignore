@@ -211,3 +211,5 @@ insertion_transformer/
 !src/insertion_transformer
 kaparthy-gpt
 .DS_Store
+checkpoint.pt
+genome.fna

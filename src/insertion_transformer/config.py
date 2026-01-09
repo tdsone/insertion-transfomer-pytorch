@@ -5,14 +5,17 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    """All configurable parameters for the Insertion Transformer."""
+    """
+    All configurable parameters for the Insertion Transformer.
+    The parameters here define the default parameters in the CLI
+    """
 
     # Device
     device: str = "mps"  # "cuda", "mps", or "cpu"
 
     # Data
-    batch_size: int = 64
-    block_size: int = 256  # max sequence length for training
+    batch_size: int = 32
+    block_size: int = 128  # max sequence length for training
 
     # Model architecture
     n_embd: int = 384  # embedding dimension
@@ -29,6 +32,9 @@ class Config:
     # Generation
     max_gen_len: int = 100
     temperature: float = 0.8
+
+    # Debugging
+    debug: bool = False  # Print timing info for each training step
 
 
 # Special token indices

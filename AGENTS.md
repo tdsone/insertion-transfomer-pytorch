@@ -1,0 +1,2 @@
+# Instructions for agents
+- We are writing scientific code. This means that if an error occurs it should NOT be handled gracefully or surpressed but rather terminate the program by throwing an exception. We care about correctness above everything else.
